@@ -1,4 +1,5 @@
 love.window.setMode(1280, 720)
+love.window.setTitle("game test")
 
 local scr_x, scr_y = love.graphics.getWidth(), love.graphics.getHeight()
 local mx, my = scr_x, scr_y
@@ -37,12 +38,20 @@ local game = {
 
 cbor = require(game.dir.lib .. "cbor")
 --eList[entity.py]
-local control = {
-	moveUp = "w",
-	moveDown = "s",
-	moveRight = "d",
-	moveLeft = "a",
-}
+local control = {}
+
+local getControl = function()
+	return {
+		moveUp 		= love.keyboard.isDown("w"),
+		moveDown 	= love.keyboard.isDown("s"),
+		moveRight 	= love.keyboard.isDown("d"),
+		moveLeft 	= love.keyboard.isDown("a"),
+		shootUp 	= love.keyboard.isDown("up"),
+		shootDown 	= love.keyboard.isDown("down"),
+		shootLeft 	= love.keyboard.isDown("left"),
+		shootRight 	= love.keyboard.isDown("right")
+	}
+end
 
 game.entityTypes = {
 	["player"] = {
@@ -62,7 +71,7 @@ local newEntity = function(px, py, entityType, owner, other)
 		px = px or 0,						-- panel-grid X
 		py = py or 0,						-- panel-grid Y
 		direction = other.direction or 1,	-- 1 = right, -1 = left
-		state = other.state or "normal",	-- normal, hurt, etc.
+		state = other.state or "stand",		-- normal, hurt, etc.
 		health = other.health or 1000,
 		maxHealth = other.maxHealth or 1000,
 		aura = other.aura or 0,				-- while above zero, attacks that deal less than the value are ignored
@@ -82,11 +91,13 @@ local newEntity = function(px, py, entityType, owner, other)
 		},
 		maxCooldown = other.maxCooldown or { -- cooldown for specific actions and states
 			move = 10,		-- 1 movement per 10 frames
+			attack = 20,	-- attacking with chip
 			cameraMod = 1,	-- higher = slower camera
 			iframes = 64,	-- invincible while above 0
 		},
 		cooldown = other.cooldown or {
 			move = 0,
+			attack = 0,
 			cameraMod = 0,
 			iframes = 0,
 		},
@@ -108,7 +119,18 @@ local newEntity = function(px, py, entityType, owner, other)
 	}
 end
 
-local echeck = {
+local map = {
+	panels = {},
+	scrollX = -74,
+	scrollY = -40,
+	zoom = 100,
+	panelWidth = 128,
+	panelHeight = 64,
+	entities = {},
+	projectiles = {}
+}
+
+local e_act = {
 	isInvincible = function(entity)
 		return entity.cooldown.iframes > 0
 	end,
@@ -123,40 +145,67 @@ local echeck = {
 	end
 }
 
--- handle later
-local newProjectile = function(px, py, path, direction, owner)
-	return {
-		px = px,				-- starting X on panel grid
-		py = py,				-- starting Y on panel grid
-		path = path,			-- code file, in data/chipdata
-		direction = direction,	-- left (-1) or right (1)
-		owner = owner,			-- ensures it won't collide with owner
-		frame = 0,				-- iterates every frame
-	}
-end
+local p_act = {
+	setDamage = function(px, py, damage, damageOwner, damageLife)
+		if map.panels[py] then
+			if map.panels[py][px] then
+				map.panels[py][px].damage = damage
+				map.panels[py][px].damageOwner = damageOwner
+				map.panels[py][px].damageLife = damageLife
+			end
+		end
+	end,
+	getDamage = function(px, py)
+		if map.panels[py] then
+			if map.panels[py][px] then
+				return map.panels[py][px].damage, map.panels[py][px].damageOwner
+			end
+		end
+		return 0, 0
+	end,
+	getEntities = function(px, py)
+		local output = {}
+		if map.panels[py] then
+			if map.panels[py][px] then
+				for id, entity in pairs(map.entities) do
+					if entity.px == px and entity.py == py then
+						output[id] = entity
+					end
+				end
+			end
+		end
+		return output
+	end
+}
 
 game.chips = {
 	["cannon"] = {
 		fullName = "Cannon",
 		description = "Fires a single projectile forwards for medium damage. Does not penetrate targets.",
+		spriteset = "cannon",
 		path = "cannon.lua",	-- data file path
 		initAmount = 3,			-- how many you start with
 		penetrates = false,		-- goes through entities
 		speed = 5,				-- pixels per frame
 		damage = 100,			-- holy shit this attack deals damage woaH
-		persistence = 1,		-- amount of frames to leave damaging trail, set to 1 for none
+		lifespan = 500,			-- amount of PANELS to travel before dissapating
+		damageLife = 4,			-- amount of frames to leave damaging trail, set to 1 for none
 	}
 }
 
-local map = {
-	panels = {},
-	scrollX = -74,
-	scrollY = -40,
-	zoom = 100,
-	panelWidth = 128,
-	panelHeight = 64,
-	entities = {}
-}
+local newProjectile = function(px, py, pType, direction, owner)
+	local output = {
+		px = px,				-- starting X on panel grid
+		py = py,				-- starting Y on panel grid
+		direction = direction,	-- left (-1) or right (1)
+		owner = owner,			-- ensures it won't collide with owner
+		frame = 0,				-- iterates every frame
+	}
+	for k,v in pairs(game.chips[pType]) do
+		output[k] = v
+	end
+	return output
+end
 
 map.entities[you] = newEntity(3, 2, "player", 1, {
 	direction = 1
@@ -171,6 +220,9 @@ local images = {
 	},
 	player = {
 		stand = love.graphics.newImage(game.dir.images .. "entities/player/stand.png")
+	},
+	projectiles = {
+		cannon = love.graphics.newImage(game.dir.images .. "projectiles/cannon.png")
 	}
 }
 
@@ -198,6 +250,8 @@ local newPanel = function(px, py, panelType, owner, crackLevel, elevation, info)
 		py = py or 0,					-- y on the panel grid
 		occupied = false,				-- whether or not someone or something is due to stand on it
 		damage = 0,						-- if attacks pass over this, it's damage value becomes the sum of all attacks' damages on there
+		damageOwner = 0,
+		damageLife = 0,
 		elevation = elevation or 0
 	}
 end
@@ -263,12 +317,16 @@ local render = function()
 						py = (y * map.panelHeight) - map.scrollY
 
 						-- colorize panels according to ownership
-						if map.panels[y][x].owner == 1 then
-							love.graphics.setColor(1, 0.75, 0.75, (not game.editor.active and love.keyboard.isDown("1")) and 0.25 or 1)
-						elseif map.panels[y][x].owner == 2 then
-							love.graphics.setColor(0.75, 0.75, 1, (not game.editor.active and love.keyboard.isDown("3")) and 0.25 or 1)
+						if p_act.getDamage(x, y) > 0 then
+							love.graphics.setColor(1, 1, 0)
 						else
-							love.graphics.setColor(1, 1, 1, (not game.editor.active and love.keyboard.isDown("2")) and 0.25 or 1)
+							if map.panels[y][x].owner == 1 then
+								love.graphics.setColor(1, 0.75, 0.75, (not game.editor.active and love.keyboard.isDown("1")) and 0.25 or 1)
+							elseif map.panels[y][x].owner == 2 then
+								love.graphics.setColor(0.75, 0.75, 1, (not game.editor.active and love.keyboard.isDown("3")) and 0.25 or 1)
+							else
+								love.graphics.setColor(1, 1, 1, (not game.editor.active and love.keyboard.isDown("2")) and 0.25 or 1)
+							end
 						end
 
 						-- fluxuate panel colors slightly
@@ -339,6 +397,14 @@ local render = function()
 			end
 		end
 	end
+	love.graphics.setColor(1, 1, 1, 1)
+	for id, projectile in pairs(map.projectiles) do
+		love.graphics.draw(
+			images.projectiles[projectile.spriteset],
+			projectile.px * map.panelWidth - map.scrollX + (map.panelWidth),
+			projectile.py * map.panelHeight - map.scrollY - (map.panelHeight / 2)
+		)
+	end
 end
 
 local anims = {
@@ -352,63 +418,77 @@ local anims = {
 }
 
 local playerControl = function(id)
-	local entity = map.entities[id]
+	local player = map.entities[id]
 	-- player movement
-	anims.moveCompress(entity, entity.cooldown.move, entity.maxCooldown.move)
-	if entity.cooldown.move == 0 then
-		entity.meta.nextMoveX = 0
-		entity.meta.nextMoveY = 0
+	anims.moveCompress(player, player.cooldown.move, player.maxCooldown.move)
+	if player.cooldown.move == 0 then
+		player.meta.nextMoveX = 0
+		player.meta.nextMoveY = 0
 		repeat
-			if love.keyboard.isDown(control.moveUp) then
-				entity.meta.nextMoveY = -1
-				entity.cooldown.move = entity.maxCooldown.move
+			if player.cooldown.attack == 0 then
+				if control.shootUp then
+					map.projectiles[#map.projectiles + 1] = newProjectile(
+						player.px,
+						player.py,
+						"cannon",
+						player.direction,
+						player.owner
+					)
+					player.cooldown.attack = player.maxCooldown.attack
+				end
+			else
+				player.cooldown.attack = player.cooldown.attack - 1
 			end
-			if love.keyboard.isDown(control.moveDown) then
-				entity.meta.nextMoveY = 1
-				entity.cooldown.move = entity.maxCooldown.move
+			if control.moveUp then
+				player.meta.nextMoveY = -1
+				player.cooldown.move = player.maxCooldown.move
 			end
-			if love.keyboard.isDown(control.moveRight) then
-				entity.meta.nextMoveX = 1
-				entity.cooldown.move = entity.maxCooldown.move
+			if control.moveDown then
+				player.meta.nextMoveY = 1
+				player.cooldown.move = player.maxCooldown.move
 			end
-			if love.keyboard.isDown(control.moveLeft) then
-				entity.meta.nextMoveX = -1
-				entity.cooldown.move = entity.maxCooldown.move
+			if control.moveRight then
+				player.meta.nextMoveX = 1
+				player.cooldown.move = player.maxCooldown.move
+			end
+			if control.moveLeft then
+				player.meta.nextMoveX = -1
+				player.cooldown.move = player.maxCooldown.move
 			end
 		until true
-		if not isPositionWalkable(id, entity.meta.nextMoveX + entity.px, entity.meta.nextMoveY + entity.py) then
-			if (entity.meta.nextMoveX ~= 0) and isPositionWalkable(id, entity.meta.nextMoveX + entity.px, entity.py) then
-				entity.meta.nextMoveY = 0
-			elseif (entity.meta.nextMoveY ~= 0) and isPositionWalkable(id, entity.px, entity.meta.nextMoveY + entity.py) then
-				entity.meta.nextMoveX = 0
+		if not isPositionWalkable(id, player.meta.nextMoveX + player.px, player.meta.nextMoveY + player.py) then
+			if (player.meta.nextMoveX ~= 0) and isPositionWalkable(id, player.meta.nextMoveX + player.px, player.py) then
+				player.meta.nextMoveY = 0
+			elseif (player.meta.nextMoveY ~= 0) and isPositionWalkable(id, player.px, player.meta.nextMoveY + player.py) then
+				player.meta.nextMoveX = 0
 			else
-				entity.cooldown.move = 0
-				entity.meta.nextMoveX = 0
-				entity.meta.nextMoveY = 0
+				player.cooldown.move = 0
+				player.meta.nextMoveX = 0
+				player.meta.nextMoveY = 0
 			end
 		end
 	else
-		if entity.cooldown.move == entity.maxCooldown.move / 2 then
-			if isPositionWalkable(id, entity.meta.nextMoveX + entity.px, entity.meta.nextMoveY + entity.py) then
-				entity.px = entity.px + entity.meta.nextMoveX
-				entity.py = entity.py + entity.meta.nextMoveY
+		if player.cooldown.move == player.maxCooldown.move / 2 then
+			if isPositionWalkable(id, player.meta.nextMoveX + player.px, player.meta.nextMoveY + player.py) then
+				player.px = player.px + player.meta.nextMoveX
+				player.py = player.py + player.meta.nextMoveY
 			end
 		end
-		entity.cooldown.move = entity.cooldown.move - 1
+		player.cooldown.move = player.cooldown.move - 1
 	end
 end
 
 local cameraControl = function()
-	if love.keyboard.isDown(control.moveRight) then
+	if control.moveRight then
 		map.scrollX = map.scrollX + 5
 	end
-	if love.keyboard.isDown(control.moveLeft) then
+	if control.moveLeft then
 		map.scrollX = map.scrollX - 5
 	end
-	if love.keyboard.isDown(control.moveUp) then
+	if control.moveUp then
 		map.scrollY = map.scrollY - 5
 	end
-	if love.keyboard.isDown(control.moveDown) then
+	if control.moveDown then
 		map.scrollY = map.scrollY + 5
 	end
 end
@@ -533,6 +613,7 @@ end
 
 runTick = function(id) -- controlled player
 	local player = map.entities[id]
+	control = getControl()
 	if player then
 		if love.window.getFullscreen() then
 			cameraDistance = {
@@ -541,7 +622,7 @@ runTick = function(id) -- controlled player
 			}
 		else
 			cameraDistance = {
-				x = scr_x / 2.3,
+				x = scr_x / 2.4,
 				y = scr_y / 3.3
 			}
 		end
@@ -551,7 +632,56 @@ runTick = function(id) -- controlled player
 		else
 			handleOccupiedPanels(id)
 			playerControl(id)
-
+			
+			for y, row in pairs(map.panels) do
+				for x, panel in pairs(row) do
+					
+					panel.damageLife = math.max(0, panel.damageLife - 1)
+					if panel.damageLife == 0 then
+						panel.damage = 0
+						panel.damageOwner = 0
+					end
+				end
+			end
+			
+			local doDeleteProjectile
+			for id, projectile in pairs(map.projectiles) do
+				doDeleteProjectile = false
+				projectile.frame = projectile.frame + 1
+				projectile.px = projectile.px + projectile.speed / map.panelWidth
+				local ppx, ppy
+				if projectile.frame >= projectile.lifespan then
+					map.projectiles[id] = nil
+				else
+					ppx, ppy = math.floor(projectile.px + 1), math.floor(projectile.py + 0.5)
+					for eid, entity in pairs(p_act.getEntities(ppx, ppy)) do
+						--error(entity)
+						local panel = e_act.getPanel(entity)
+						if panel.px == ppx and panel.py == ppy then
+							local damage, owner = p_act.getDamage(ppx, ppy)
+							if (damage > 0) and (owner ~= eid) then
+								entity.health = entity.health - damage
+								panel.damage = 0
+								panel.damageOwner = 0
+								doDeleteProjectile = true
+								break
+							end
+						end
+					end
+					if doDeleteProjectile then
+						map.projectiles[id] = nil
+						--doDeleteProjectile = false
+					else
+						p_act.setDamage(ppx, ppy, projectile.damage, projectile.owner, projectile.damageLife)
+					end
+				end
+			end
+			-- check for dead people
+			for id, entity in pairs(map.entities) do
+				if entity.health <= 0 then
+					map.entities[id] = nil
+				end
+			end
 			-- camera movement
 			player.x = player.px * map.panelWidth  + player.xadj - map.scrollX
 			player.y = player.py * map.panelHeight + player.yadj - map.scrollY
