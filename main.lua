@@ -138,54 +138,6 @@ local map = {
 	projectiles = {}
 }
 
-local e_act = {
-	isInvincible = function(entity)
-		return entity.cooldown.iframes > 0
-	end,
-	isDead = function(entity)
-		return entity.health <= 0
-	end,
-	isMoving = function(entity)
-		return entity.cooldown.move ~= 0
-	end,
-	getPanel = function(entity)
-		return (map.panels[entity.py] or {})[entity.px]
-	end
-}
-
-local p_act = {
-	setDamage = function(px, py, damage, damageOwner, damageLife)
-		if map.panels[py] then
-			if map.panels[py][px] then
-				map.panels[py][px].damage = damage
-				map.panels[py][px].damageOwner = damageOwner
-				map.panels[py][px].damageLife = damageLife
-			end
-		end
-	end,
-	getDamage = function(px, py)
-		if map.panels[py] then
-			if map.panels[py][px] then
-				return map.panels[py][px].damage, map.panels[py][px].damageOwner
-			end
-		end
-		return 0, 0
-	end,
-	getEntities = function(px, py)
-		local output = {}
-		if map.panels[py] then
-			if map.panels[py][px] then
-				for id, entity in pairs(map.entities) do
-					if entity.px == px and entity.py == py then
-						output[id] = entity
-					end
-				end
-			end
-		end
-		return output
-	end
-}
-
 game.chips = {}
 
 for k, name in pairs(love.filesystem.getDirectoryItems(game.dir.chipdata)) do
@@ -287,6 +239,65 @@ local newPanel = function(px, py, panelType, owner, crackLevel, elevation, info)
 		elevation = elevation or 0
 	}
 end
+
+local e_act = {
+	isInvincible = function(entity)
+		return entity.cooldown.iframes > 0
+	end,
+	isDead = function(entity)
+		return entity.health <= 0
+	end,
+	isMoving = function(entity)
+		return entity.cooldown.move ~= 0
+	end,
+	getPanel = function(entity)
+		return (map.panels[entity.py] or {})[entity.px]
+	end
+}
+
+local p_act = {
+	setDamage = function(px, py, damage, damageOwner, damageLife)
+		if map.panels[py] then
+			if map.panels[py][px] then
+				map.panels[py][px].damage = damage
+				map.panels[py][px].damageOwner = damageOwner
+				map.panels[py][px].damageLife = damageLife
+			end
+		end
+	end,
+	getDamage = function(px, py)
+		if map.panels[py] then
+			if map.panels[py][px] then
+				return map.panels[py][px].damage, map.panels[py][px].damageOwner
+			end
+		end
+		return 0, 0
+	end,
+	getEntities = function(px, py)
+		local output = {}
+		if map.panels[py] then
+			if map.panels[py][px] then
+				for id, entity in pairs(map.entities) do
+					if entity.px == px and entity.py == py then
+						output[id] = entity
+					end
+				end
+			end
+		end
+		return output
+	end,
+	setPanel = function(px, py, panelType, owner, crackLevel, elevation)
+		map.panels[py] = map.panels[py] or {}
+		map.panels[py][px] = panelType and newPanel(
+			px,
+			py,
+			panelType,
+			owner,
+			crackLevel,
+			elevation
+		) or nil
+	end
+}
 
 local isPositionWalkable = function(id, px, py)
 	local output = false
@@ -919,8 +930,7 @@ local mouseActions = function(x, y, button)
 		local px = math.floor((x - (map.panelWidth * 0) + map.scrollX) / map.panelWidth)
 		local py = math.floor((y - (map.panelHeight * 0) + map.scrollY) / map.panelHeight)
 		if button == 1 then
-			map.panels[py] = map.panels[py] or {}
-			map.panels[py][px] = newPanel(
+			p_act.setPanel(
 				px,
 				py,
 				game.editor.panel.panelType,
@@ -929,9 +939,7 @@ local mouseActions = function(x, y, button)
 				game.editor.panel.elevation
 			)
 		elseif button == 2 then
-			if map.panels[py] then
-				map.panels[py][px] = nil
-			end
+			p_act.setPanel(px, py, nil)
 		elseif button == 3 then
 			map.entities[you].px = px
 			map.entities[you].py = py
