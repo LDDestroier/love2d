@@ -1,14 +1,14 @@
 local tArg = {...}
 
 local info = {
-	fullName = "Cannon",
-	description = "Fires a single projectile forwards for medium damage. Does not penetrate targets.",
+	fullName = "WaveCannon",
+	description = "Fires a projectile forwards that moves in a wavy pattern. Penetrates targets.",
 	spriteset = "cannon",	-- which sprites to use
 	initAmount = 99,		-- how many you start with
-	penetrates = false,		-- goes through entities
-	damage = 100,			-- holy shit this attack deals damage woaH
+	penetrates = true,		-- goes through entities
+	damage = 80,			-- holy shit this attack deals damage woaH
 	lifespan = 500,			-- amount of PANELS to travel before dissapating
-	damageLife = 0,			-- amount of frames to leave damaging trail, set to 1 for none
+	damageLife = 8,			-- amount of frames to leave damaging trail, set to 1 for none
 }
 
 local data = tArg[1]	-- all info on projectile
@@ -20,11 +20,12 @@ if not data then
 end
 
 if data.frame == 1 then
-	love.audio.stop(assets.sfx.cannon)
-	love.audio.play(assets.sfx.cannon)
+	love.audio.stop(assets.sfx.wavecannon)
+	love.audio.play(assets.sfx.wavecannon)
 end
 
-data.px = data.px + 0.1
+data.px = data.px + 0.06
+data.py = data.initY + math.sin(data.frame / 13)
 
 local ppx, ppy = math.floor(data.px + 1), math.floor(data.py + 0.5) -- centered X/Y of projectile
 

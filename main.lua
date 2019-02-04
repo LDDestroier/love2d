@@ -7,6 +7,8 @@ local mx, my = scr_x, scr_y
 local mainDir = "data/"
 local you = 1 -- entity ID that you play as
 
+
+
 local game = {
 	meta = {
 		backgroundMod = 0
@@ -17,6 +19,8 @@ local game = {
 		chipdata = mainDir .. "chipdata/",
 		maps = mainDir .. "maps/",
 		lib = mainDir .. "lib/",
+		music = mainDir .. "music/",
+		sfx = mainDir .. "sfx/"
 	},
 	map = {
 		name = "testmap.cbor"
@@ -64,6 +68,7 @@ local newEntity = function(px, py, entityType, owner, other)
 	-- do not add any fuckin' userdata values
 	other = other or {}
 	return {
+		type = "entity",
 		x = 0,								-- onscreen X, determined afterwards
 		y = 0,								-- onscreen Y, also determined afterwards
 		xadj = other.xadj or 3,				-- adjust sprite X
@@ -72,8 +77,9 @@ local newEntity = function(px, py, entityType, owner, other)
 		py = py or 0,						-- panel-grid Y
 		direction = other.direction or 1,	-- 1 = right, -1 = left
 		state = other.state or "stand",		-- normal, hurt, etc.
-		health = other.health or 1000,
+		health = other.health or 1000,		-- better not reach 0
 		maxHealth = other.maxHealth or 1000,
+		canMove = true,						-- whether or not you can move, usually set to false after dying
 		aura = other.aura or 0,				-- while above zero, attacks that deal less than the value are ignored
 		owner = owner or 1,					-- which panels belong to this entity
 		name = other.name or game.entityTypes[entityType].name,
@@ -91,15 +97,17 @@ local newEntity = function(px, py, entityType, owner, other)
 		},
 		maxCooldown = other.maxCooldown or { -- cooldown for specific actions and states
 			move = 10,		-- 1 movement per 10 frames
-			attack = 20,	-- attacking with chip
+			attack = 32,	-- attacking with chip
 			cameraMod = 1,	-- higher = slower camera
 			iframes = 64,	-- invincible while above 0
+			fadeToDeath = 16,
 		},
 		cooldown = other.cooldown or {
 			move = 0,
 			attack = 0,
 			cameraMod = 0,
 			iframes = 0,
+			fadeToDeath = 0,	-- will remove entity if health == 0 and fadeToDeath == 0
 		},
 		meta = other.meta or {	-- other player-specific values, like for animation
 			playerBob = 0,		-- 0-360 value for bobbing the player up and down
@@ -110,10 +118,10 @@ local newEntity = function(px, py, entityType, owner, other)
 			nextMoveY = 0,
 		},
 		loadout = other.loadout or {
-			[1] = nil,
-			[2] = nil,
-			[3] = nil,
-			[4] = nil
+			["up"] = nil,
+			["down"] = nil,
+			["left"] = nil,
+			["right"] = nil
 		},
 		folder = other.folder or {}
 	}
@@ -178,25 +186,23 @@ local p_act = {
 	end
 }
 
-game.chips = {
-	["cannon"] = {
-		fullName = "Cannon",
-		description = "Fires a single projectile forwards for medium damage. Does not penetrate targets.",
-		spriteset = "cannon",
-		path = "cannon.lua",	-- data file path
-		initAmount = 3,			-- how many you start with
-		penetrates = false,		-- goes through entities
-		speed = 5,				-- pixels per frame
-		damage = 100,			-- holy shit this attack deals damage woaH
-		lifespan = 500,			-- amount of PANELS to travel before dissapating
-		damageLife = 4,			-- amount of frames to leave damaging trail, set to 1 for none
-	}
-}
+game.chips = {}
+
+for k, name in pairs(love.filesystem.getDirectoryItems(game.dir.chipdata)) do
+	local cName = name:gsub("%.lua","")
+	--game.chips[cName] = assert(loadfile(game.dir.chipdata .. name))()
+	game.chips[cName] = love.filesystem.load(game.dir.chipdata .. name)()
+	game.chips[cName].path = name
+end
 
 local newProjectile = function(px, py, pType, direction, owner)
 	local output = {
-		px = px,				-- starting X on panel grid
-		py = py,				-- starting Y on panel grid
+		type = "projectile",
+		px = px,				-- current X on panel grid
+		py = py,				-- current Y on panel grid
+		initX = px,				-- starting X on panel grid
+		initY = py,				-- starting Y on panel grid
+		noGoAreas = {},			-- areas that the projectile won't do damage
 		direction = direction,	-- left (-1) or right (1)
 		owner = owner,			-- ensures it won't collide with owner
 		frame = 0,				-- iterates every frame
@@ -204,13 +210,21 @@ local newProjectile = function(px, py, pType, direction, owner)
 	for k,v in pairs(game.chips[pType]) do
 		output[k] = v
 	end
+	output.amount = output.initAmount
 	return output
 end
 
 map.entities[you] = newEntity(3, 2, "player", 1, {
 	direction = 1
 })
-map.entities[2] = newEntity(5, 2, "player", 2, {
+
+map.entities[4] = newEntity(5, 1, "player", 2, {
+	direction = -1
+})
+map.entities[2] = newEntity(6, 3, "player", 2, {
+	direction = -1
+})
+map.entities[3] = newEntity(7, 2, "player", 2, {
 	direction = -1
 })
 
@@ -223,7 +237,25 @@ local images = {
 	},
 	projectiles = {
 		cannon = love.graphics.newImage(game.dir.images .. "projectiles/cannon.png")
+	},
+	ui = {
+		up = love.graphics.newImage(game.dir.images .. "ui/up.png"),
+		down = love.graphics.newImage(game.dir.images .. "ui/down.png"),
+		left = love.graphics.newImage(game.dir.images .. "ui/left.png"),
+		right = love.graphics.newImage(game.dir.images .. "ui/right.png")
 	}
+}
+
+local music = {
+	battle = love.audio.newSource(game.dir.music .. "operation.mp3", "static")
+}
+
+local sfx = {
+	cannon = love.audio.newSource(game.dir.sfx .. "cannon.ogg", "static"),
+	backcannon = love.audio.newSource(game.dir.sfx .. "backcannon.ogg", "static"),
+	hurt = love.audio.newSource(game.dir.sfx .. "hurt.ogg", "static"),
+	rocket = love.audio.newSource(game.dir.sfx .. "rocket.ogg", "static"),
+	wavecannon = love.audio.newSource(game.dir.sfx .. "wavecannon.ogg", "static")
 }
 
 local cameraDistance
@@ -301,6 +333,77 @@ local tableSize = function(tbl)
 	return bottom, top
 end
 
+local renderChipUI = function(player)
+	local height = 150
+	local adj = images.ui.down:getHeight() * 1.7
+	love.graphics.setColor(1, 1, 1, 1)
+	love.graphics.draw(
+		images.ui.up,
+		scr_x / 2 + adj,
+		scr_y - height,
+		0, 2, 2
+	)
+	if player.loadout["up"] then
+		love.graphics.print(
+			game.chips[player.loadout["up"][1]].fullName .. " (x" .. player.loadout["up"][2] .. ")",
+			scr_x / 2 + adj + images.ui.up:getWidth() * 3,
+			scr_y - height,
+			0, 2, 2
+		)
+	end
+
+	love.graphics.draw(
+		images.ui.down,
+		scr_x / 2 - adj,
+		scr_y - height + images.ui.down:getHeight() * 7,
+		0, 2, 2
+	)
+	if player.loadout["down"] then
+		love.graphics.print(
+			game.chips[player.loadout["down"][1]].fullName .. " (x" .. player.loadout["down"][2] .. ")",
+			scr_x / 2 - adj + images.ui.up:getWidth() * 3,
+			scr_y - height + images.ui.down:getHeight() * 7,
+			0, 2, 2
+		)
+	end
+
+	love.graphics.draw(
+		images.ui.left,
+		scr_x / 2 - images.ui.left:getWidth() * 4,
+		scr_y - height + images.ui.down:getHeight() * 4 - adj,
+		0, 2, 2
+	)
+	if player.loadout["left"] then
+		love.graphics.print(
+			game.chips[player.loadout["left"][1]].fullName .. " (x" .. player.loadout["left"][2] .. ")",
+			scr_x / 2 - images.ui.left:getWidth(),
+			scr_y - height + images.ui.down:getHeight() * 4 - adj,
+			0, 2, 2
+		)
+	end
+
+	love.graphics.draw(
+		images.ui.right,
+		scr_x / 2 + images.ui.left:getWidth() * 4,
+		scr_y - height + images.ui.down:getHeight() * 3 + adj,
+		0,
+		2,
+		2
+	)
+	if player.loadout["right"] then
+		love.graphics.print(
+			game.chips[player.loadout["right"][1]].fullName .. " (x" .. player.loadout["right"][2] .. ")",
+			scr_x / 2 + images.ui.left:getWidth() * 7,
+			scr_y - height + images.ui.down:getHeight() * 3 + adj,
+			0, 2, 2
+		)
+	end
+end
+
+local round = function(num)
+	return math.floor(num + 0.5)
+end
+
 local render = function()
 	-- draw panels
 	local px, py
@@ -353,57 +456,64 @@ local render = function()
 			end
 		end
 	end
-	-- draw entities
+	-- draw entities / projectiles
 	local ex, ey
 	local eList = {} -- organize entities by py, for layering
 	local low, high = 0, 0
 	for id, entity in pairs(map.entities) do
 		if entity.meta.doRender then
-			eList[entity.py] = eList[entity.py] or {}
-			eList[entity.py][#eList[entity.py] + 1] = {id, entity}
-			low = math.min(low, entity.py)
-			high = math.max(high, entity.py)
+			eList[round(entity.py)] = eList[round(entity.py)] or {}
+			eList[round(entity.py)][#eList[round(entity.py)] + 1] = {id, entity}
+			low = math.min(low, round(entity.py))
+			high = math.max(high, round(entity.py))
 		end
+	end
+	for id, projectile in pairs(map.projectiles) do
+		eList[round(projectile.py)] = eList[round(projectile.py)] or {}
+		eList[round(projectile.py)][#eList[round(projectile.py)] + 1] = {id, projectile}
+		low = math.min(low, round(projectile.py))
+		high = math.max(high, round(projectile.py))
 	end
 	local id
 	for y = low, high do
 		if eList[y] then
 			for _, _e in pairs(eList[y]) do
 				id, entity = _e[1], _e[2]
-				entity.meta.playerBob = (map.entities[you].meta.playerBob + 1) % 360
-				love.graphics.setColor(1, 1, 1, love.keyboard.isDown("space") and 0.25 or 1)
-				local bobMult = math.sin(math.rad(entity.meta.playerBob) * 1) * 0.05 + 0.05
-				love.graphics.setColor(unpack(entity.tint))
-				ex = entity.px * map.panelWidth  - map.scrollX + (entity.xadj * entity.meta.stretchX * entity.direction)
-				ey = entity.py * map.panelHeight - map.scrollY + entity.yadj
-				love.graphics.draw(
-					images[entity.spriteset].stand,
-					ex - (0.5 * ((entity.meta.stretchX * entity.direction) - 1) * images[entity.spriteset].stand:getWidth() ),
-					ey + (bobMult * images[entity.spriteset].stand:getHeight()),
-					0,
-					entity.meta.stretchX * entity.direction,
-					entity.meta.stretchY - bobMult
-				)
-				love.graphics.printf(
-					entity.health,
-					ex - map.panelWidth * 0.5,
-					ey - 10,
-					map.panelWidth,
-					"center",
-					0,
-					2,
-					2
-				)
+				if entity.type == "entity" then
+					entity.meta.playerBob = (map.entities[you].meta.playerBob + 1) % 360
+					love.graphics.setColor(1, 1, 1, love.keyboard.isDown("space") and 0.25 or 1)
+					local bobMult = math.sin(math.rad(entity.meta.playerBob) * 1) * 0.05 + 0.05
+					love.graphics.setColor(unpack(entity.tint))
+					ex = entity.px * map.panelWidth  - map.scrollX + (entity.xadj * entity.meta.stretchX * entity.direction)
+					ey = entity.py * map.panelHeight - map.scrollY + entity.yadj
+					love.graphics.draw(
+						images[entity.spriteset].stand,
+						ex - (0.5 * ((entity.meta.stretchX * entity.direction) - 1) * images[entity.spriteset].stand:getWidth() ),
+						ey + (bobMult * images[entity.spriteset].stand:getHeight()),
+						0,
+						entity.meta.stretchX * entity.direction,
+						entity.meta.stretchY - bobMult
+					)
+					love.graphics.printf(
+						entity.health,
+						ex - map.panelWidth * 0.5,
+						ey - 10,
+						map.panelWidth,
+						"center",
+						0,
+						2,
+						2
+					)
+				elseif entity.type == "projectile" then
+					love.graphics.setColor(1, 1, 1, 1)
+					love.graphics.draw(
+						images.projectiles[entity.spriteset],
+						entity.px * map.panelWidth - map.scrollX + (map.panelWidth),
+						entity.py * map.panelHeight - map.scrollY - (map.panelHeight / 2)
+					)
+				end
 			end
 		end
-	end
-	love.graphics.setColor(1, 1, 1, 1)
-	for id, projectile in pairs(map.projectiles) do
-		love.graphics.draw(
-			images.projectiles[projectile.spriteset],
-			projectile.px * map.panelWidth - map.scrollX + (map.panelWidth),
-			projectile.py * map.panelHeight - map.scrollY - (map.panelHeight / 2)
-		)
 	end
 end
 
@@ -417,27 +527,52 @@ local anims = {
 	end,
 }
 
+local useChip = function(player, directional)
+	if player.loadout[directional] then
+		map.projectiles[#map.projectiles + 1] = newProjectile(
+			player.px,
+			player.py,
+			player.loadout[directional][1],
+			player.direction,
+			player.owner
+		)
+		player.cooldown.attack = player.maxCooldown.attack
+		player.loadout[directional][2] = player.loadout[directional][2] - 1
+		if player.loadout[directional][2] == 0 then
+			player.loadout[directional] = nil
+		end
+	end
+end
+
+local giveChip = function(player, chipName, directional)
+	player.loadout[directional] = {chipName, game.chips[chipName].initAmount}
+end
+
+
+giveChip(map.entities[you], "cannon", "up")
+giveChip(map.entities[you], "wavecannon", "right")
+giveChip(map.entities[you], "rocket", "down")
+giveChip(map.entities[you], "backcannon", "left")
+
 local playerControl = function(id)
 	local player = map.entities[id]
 	-- player movement
 	anims.moveCompress(player, player.cooldown.move, player.maxCooldown.move)
+	player.cooldown.attack = math.max(0, player.cooldown.attack - 1)
 	if player.cooldown.move == 0 then
 		player.meta.nextMoveX = 0
 		player.meta.nextMoveY = 0
 		repeat
 			if player.cooldown.attack == 0 then
 				if control.shootUp then
-					map.projectiles[#map.projectiles + 1] = newProjectile(
-						player.px,
-						player.py,
-						"cannon",
-						player.direction,
-						player.owner
-					)
-					player.cooldown.attack = player.maxCooldown.attack
+					useChip(player, "up")
+				elseif control.shootDown then
+					useChip(player, "down")
+				elseif control.shootLeft then
+					useChip(player, "left")
+				elseif control.shootRight then
+					useChip(player, "right")
 				end
-			else
-				player.cooldown.attack = player.cooldown.attack - 1
 			end
 			if control.moveUp then
 				player.meta.nextMoveY = -1
@@ -566,6 +701,7 @@ function love.draw()
 	drawBoxBackground(game.meta.backgroundMod, 0.05, 256)
 	drawBoxBackground(game.meta.backgroundMod * 1.5, 0.04, 128)
 	render()
+	renderChipUI(map.entities[you])
 	if game.editor.active then
 		love.graphics.setColor(0.1, 1, 0.1, 0.05)
 		love.graphics.rectangle("fill", 1, 1, scr_x, scr_x)
@@ -611,7 +747,7 @@ local handleOccupiedPanels = function(id)
 	end
 end
 
-runTick = function(id) -- controlled player
+local runTick = function(id) -- controlled player
 	local player = map.entities[id]
 	control = getControl()
 	if player then
@@ -623,7 +759,7 @@ runTick = function(id) -- controlled player
 		else
 			cameraDistance = {
 				x = scr_x / 2.4,
-				y = scr_y / 3.3
+				y = scr_y / 3.4
 			}
 		end
 		game.meta.backgroundMod = (game.meta.backgroundMod + 1) % 10000
@@ -632,54 +768,69 @@ runTick = function(id) -- controlled player
 		else
 			handleOccupiedPanels(id)
 			playerControl(id)
-			
+
 			for y, row in pairs(map.panels) do
 				for x, panel in pairs(row) do
-					
+
 					panel.damageLife = math.max(0, panel.damageLife - 1)
 					if panel.damageLife == 0 then
 						panel.damage = 0
 						panel.damageOwner = 0
 					end
+
 				end
 			end
-			
+
 			local doDeleteProjectile
 			for id, projectile in pairs(map.projectiles) do
-				doDeleteProjectile = false
 				projectile.frame = projectile.frame + 1
-				projectile.px = projectile.px + projectile.speed / map.panelWidth
+				doDeleteProjectile, map.projectiles[id] = love.filesystem.load(game.dir.chipdata .. projectile.path)(projectile, p_act, {images = images, music = music, sfx = sfx})
 				local ppx, ppy
-				if projectile.frame >= projectile.lifespan then
+				if doDeleteProjectile then
 					map.projectiles[id] = nil
 				else
+					local cancel = false
 					ppx, ppy = math.floor(projectile.px + 1), math.floor(projectile.py + 0.5)
 					for eid, entity in pairs(p_act.getEntities(ppx, ppy)) do
-						--error(entity)
 						local panel = e_act.getPanel(entity)
 						if panel.px == ppx and panel.py == ppy then
 							local damage, owner = p_act.getDamage(ppx, ppy)
 							if (damage > 0) and (owner ~= eid) then
-								entity.health = entity.health - damage
-								panel.damage = 0
-								panel.damageOwner = 0
-								doDeleteProjectile = true
-								break
+								if projectile.noGoAreas[ppy] then
+									if projectile.noGoAreas[ppy][ppx] then
+										cancel = true
+									end
+								end
+								if not cancel then
+									entity.health = math.max(0, entity.health - damage)
+									panel.damage = 0
+									panel.damageOwner = 0
+									doDeleteProjectile = not projectile.penetrates
+									projectile.noGoAreas[ppy] = projectile.noGoAreas[ppy] or {}
+									projectile.noGoAreas[ppy][ppx] = true
+									break
+								end
 							end
 						end
 					end
 					if doDeleteProjectile then
 						map.projectiles[id] = nil
-						--doDeleteProjectile = false
-					else
-						p_act.setDamage(ppx, ppy, projectile.damage, projectile.owner, projectile.damageLife)
 					end
 				end
 			end
 			-- check for dead people
 			for id, entity in pairs(map.entities) do
-				if entity.health <= 0 then
-					map.entities[id] = nil
+				if e_act.isDead(entity) then
+					map.entities[id].canMove = false
+					if map.entities[id].cooldown.fadeToDeath == 0 then
+						map.entities[id].cooldown.fadeToDeath = entity.maxCooldown.fadeToDeath
+					else
+						map.entities[id].cooldown.fadeToDeath = map.entities[id].cooldown.fadeToDeath - 1
+						map.entities[id].tint[4] = map.entities[id].cooldown.fadeToDeath / map.entities[id].maxCooldown.fadeToDeath
+						if map.entities[id].cooldown.fadeToDeath == 0 then
+							map.entities[id] = nil
+						end
+					end
 				end
 			end
 			-- camera movement
@@ -710,13 +861,15 @@ runTick = function(id) -- controlled player
 			["player.py"] = player.py,
 			["game.editor.active"] = game.editor.active,
 			["game.editor.panel.owner"] = game.editor.panel.owner,
-			["#map.panels"] = #map.panels
+			["#map.panels"] = #map.panels,
+			["Framerate"] = love.timer.getFPS()
 		}
 	end
 end
 
 function love.update()
 	runTick(you)
+	love.audio.play(music.battle)
 end
 
 local saveMap = function(map, path)
