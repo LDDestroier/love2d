@@ -3,6 +3,7 @@ local tArg = {...}
 local info = {
 	fullName = "Rocket",
 	description = "A powerful attack with a large windup.",
+	chipType = "attack",
 	spriteset = "cannon",	-- which sprites to use
 	initAmount = 99,		-- how many you start with
 	penetrates = false,		-- goes through entities

@@ -3,6 +3,7 @@ local tArg = {...}
 local info = {
 	fullName = "BackCannon",
 	description = "Fires a projectile that spawns 4 panels forwards and aims backwards.",
+	chipType = "attack",
 	spriteset = "cannon",	-- which sprites to use
 	initAmount = 99,		-- how many you start with
 	penetrates = false,		-- goes through entities

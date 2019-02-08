@@ -3,6 +3,7 @@ local tArg = {...}
 local info = {
 	fullName = "WaveCannon",
 	description = "Fires a projectile forwards that moves in a wavy pattern. Penetrates targets.",
+	chipType = "attack",
 	spriteset = "cannon",	-- which sprites to use
 	initAmount = 99,		-- how many you start with
 	penetrates = true,		-- goes through entities

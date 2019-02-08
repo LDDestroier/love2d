@@ -7,9 +7,11 @@ local mx, my = scr_x, scr_y
 local mainDir = "data/"
 local you = 1 -- entity ID that you play as
 
-
-
 local game = {
+	options = {
+		muteMusic = false,
+		muteSFX = false,
+	},
 	meta = {
 		backgroundMod = 0
 	},
@@ -17,6 +19,7 @@ local game = {
 		main = mainDir,
 		images = mainDir .. "images/",
 		chipdata = mainDir .. "chipdata/",
+		fonts = mainDir .. "fonts/",
 		maps = mainDir .. "maps/",
 		lib = mainDir .. "lib/",
 		music = mainDir .. "music/",
@@ -198,6 +201,10 @@ local images = {
 	}
 }
 
+local fonts = {
+	ldd8x8 = love.graphics.newFont(game.dir.fonts .. "ldd8x8-mono.ttf", 24)
+}
+
 local music = {
 	battle = love.audio.newSource(game.dir.music .. "operation.mp3", "static")
 }
@@ -211,6 +218,7 @@ local sfx = {
 }
 
 local cameraDistance
+love.graphics.setFont(fonts.ldd8x8)
 
 for k,v in pairs(images) do
 	for iType, image in pairs(v) do
@@ -296,7 +304,15 @@ local p_act = {
 			crackLevel,
 			elevation
 		) or nil
-	end
+	end,
+	getPanel = function(px, py)
+		if map.panels[py] then
+			if map.panels[py][px] then
+				return map.panels[py][px]
+			end
+		end
+		return false
+	end,
 }
 
 local isPositionWalkable = function(id, px, py)
@@ -345,70 +361,44 @@ local tableSize = function(tbl)
 end
 
 local renderChipUI = function(player)
-	local height = 150
-	local adj = images.ui.down:getHeight() * 1.7
+	local cx = scr_x / 2
+	local cy = scr_y - 100
+	local radius = 60
+	local rotate = 19
+
+	local posses = {
+		["right"] 	= {cx + math.cos(math.rad(0 + rotate)) * radius,	cy + math.sin(math.rad(0 + rotate)) * radius},
+		["down"] 	= {cx + math.cos(math.rad(90 + rotate)) * radius, 	cy + math.sin(math.rad(90 + rotate)) * radius},
+		["left"] 	= {cx + math.cos(math.rad(180 + rotate)) * radius, 	cy + math.sin(math.rad(180 + rotate)) * radius},
+		["up"] 		= {cx + math.cos(math.rad(270 + rotate)) * radius, 	cy + math.sin(math.rad(270 + rotate)) * radius}
+	}
+
+	love.graphics.setColor(0.2, 0.2, 0.2, 1)
+
+	love.graphics.circle(
+		"line",
+		cx + 0.5 * (radius - images.ui["up"]:getWidth() / 2),
+		cy + 0.5 * (radius - images.ui["up"]:getWidth() / 2),
+		radius
+	)
+
 	love.graphics.setColor(1, 1, 1, 1)
-	love.graphics.draw(
-		images.ui.up,
-		scr_x / 2 + adj,
-		scr_y - height,
-		0, 2, 2
-	)
-	if player.loadout["up"] then
-		love.graphics.print(
-			game.chips[player.loadout["up"][1]].fullName .. " (x" .. player.loadout["up"][2] .. ")",
-			scr_x / 2 + adj + images.ui.up:getWidth() * 3,
-			scr_y - height,
-			0, 2, 2
+
+	for dir, pos in pairs(posses) do
+		love.graphics.draw(
+			images.ui[dir],
+			pos[1],
+			pos[2]
 		)
+		if player.loadout[dir] then
+			love.graphics.print(
+				game.chips[player.loadout[dir][1]].fullName .. " (x" .. player.loadout[dir][2] .. ")",
+				pos[1] + images.ui[dir]:getWidth() + 10,
+				pos[2] + 5
+			)
+		end
 	end
 
-	love.graphics.draw(
-		images.ui.down,
-		scr_x / 2 - adj,
-		scr_y - height + images.ui.down:getHeight() * 7,
-		0, 2, 2
-	)
-	if player.loadout["down"] then
-		love.graphics.print(
-			game.chips[player.loadout["down"][1]].fullName .. " (x" .. player.loadout["down"][2] .. ")",
-			scr_x / 2 - adj + images.ui.up:getWidth() * 3,
-			scr_y - height + images.ui.down:getHeight() * 7,
-			0, 2, 2
-		)
-	end
-
-	love.graphics.draw(
-		images.ui.left,
-		scr_x / 2 - images.ui.left:getWidth() * 4,
-		scr_y - height + images.ui.down:getHeight() * 4 - adj,
-		0, 2, 2
-	)
-	if player.loadout["left"] then
-		love.graphics.print(
-			game.chips[player.loadout["left"][1]].fullName .. " (x" .. player.loadout["left"][2] .. ")",
-			scr_x / 2 - images.ui.left:getWidth(),
-			scr_y - height + images.ui.down:getHeight() * 4 - adj,
-			0, 2, 2
-		)
-	end
-
-	love.graphics.draw(
-		images.ui.right,
-		scr_x / 2 + images.ui.left:getWidth() * 4,
-		scr_y - height + images.ui.down:getHeight() * 3 + adj,
-		0,
-		2,
-		2
-	)
-	if player.loadout["right"] then
-		love.graphics.print(
-			game.chips[player.loadout["right"][1]].fullName .. " (x" .. player.loadout["right"][2] .. ")",
-			scr_x / 2 + images.ui.left:getWidth() * 7,
-			scr_y - height + images.ui.down:getHeight() * 3 + adj,
-			0, 2, 2
-		)
-	end
 end
 
 local round = function(num)
@@ -507,13 +497,10 @@ local render = function()
 					)
 					love.graphics.printf(
 						entity.health,
-						ex - map.panelWidth * 0.5,
-						ey - 10,
+						ex - map.panelWidth * 0.0,
+						ey - 15,
 						map.panelWidth,
-						"center",
-						0,
-						2,
-						2
+						"center"
 					)
 				elseif entity.type == "projectile" then
 					love.graphics.setColor(1, 1, 1, 1)
@@ -722,14 +709,14 @@ function love.draw()
 			[1] = "Red",
 			[2] = "Blue"
 		}
-		love.graphics.print("Editor active. (Panel = " .. ownerTbl[game.editor.panel.owner] .. ")", 250, 15, 0, 4, 4)
+		love.graphics.print("Editor active. (Panel = " .. ownerTbl[game.editor.panel.owner] .. ")", 350, 15, 0)
 	end
 	-- debugging
 	if true then
 		local i = 1
 		love.graphics.setColor(1, 1, 1, 1)
 		for name, value in pairs(game.debug) do
-			love.graphics.print(name .. " = " .. tostring(value), 5, i * 15 - 10)
+			love.graphics.print(name .. " = " .. tostring(value), 5, i * 30 - 10)
 			i = i + 1
 		end
 	end
@@ -880,7 +867,9 @@ end
 
 function love.update()
 	runTick(you)
-	love.audio.play(music.battle)
+	if not game.options.muteMusic then
+		love.audio.play(music.battle)
+	end
 end
 
 local saveMap = function(map, path)

@@ -3,6 +3,7 @@ local tArg = {...}
 local info = {
 	fullName = "Cannon",
 	description = "Fires a single projectile forwards for medium damage. Does not penetrate targets.",
+	chipType = "attack",
 	spriteset = "cannon",	-- which sprites to use
 	initAmount = 99,		-- how many you start with
 	penetrates = false,		-- goes through entities
